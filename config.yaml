@@ -1,0 +1,120 @@
+# ============================================================
+# Camarilla + RSI Intraday System — configuration
+# Every threshold from the trading plan lives here.
+# ============================================================
+
+mode: paper          # paper | live   (live also requires KITE_LIVE_CONFIRM=YES in .env)
+capital: 1000000     # ₹10 lakh
+
+risk:
+  max_daily_loss_pct: 2.0      # kill switch: halt + square off everything
+  max_trades_per_day: 6
+  allocation:                  # % of capital (margin) per bucket
+    nifty_pct: 30
+    banknifty_pct: 30
+    stocks_pct: 25             # shared pool across all stock futures
+    hedge_budget_pct: 8        # max premium spend on OTM puts (5–8% band, cap at 8)
+    cash_reserve_pct: 10
+
+session:
+  open: "09:15"
+  close: "15:30"
+  opening_range_minutes: 15    # ORH/ORL locked at 09:30
+  no_entry_after: "14:30"      # fresh entries blocked after this
+  square_off: "15:10"          # hard intraday square-off
+
+strategy:
+  candle_minutes: 5
+  rsi_period: 14
+  atr_period: 14
+  vol_sma_period: 20
+  volume_expansion_mult: 1.3   # candle volume > 1.3x 20-SMA = "expansion"
+  rsi_reversal_oversold: 35    # reversal: RSI was below this...
+  rsi_reversal_lookback: 6     # ...within last N candles, now rising 2 candles
+  stop_buffer_pct: 0.04        # SL trigger placed this % below the level ("below H3")
+  no_trade:
+    rsi_chop_low: 40           # RSI stuck in 40–55 for first hour = stand aside
+    rsi_chop_high: 55
+    first_hour_minutes: 60
+    unblock_on_rsi_break: true # after first hour, RSI escaping the band re-enables trading
+    min_first30_range_pct: 0.25  # first 30-min range < 0.25% = no-trade day
+    chop_lookback_candles: 8     # oscillation inside H3..L3 detection
+    chop_min_pivot_crossings: 2
+  # When capital is tight, signals execute in this order (the plan's priority list):
+  priority:
+    - NIFTY:breakout_long
+    - BANKNIFTY:breakout_long
+    - RELIANCE:stock_momentum
+    - HDFCBANK:stock_momentum
+    - NIFTY:reversal_long
+
+execution:
+  partial_exit_at_t1_pct: 50   # book half at Target 1, trail the rest
+  trail_mode: atr              # atr | candle_low
+  trail_atr_mult: 1.5
+  slippage:                    # paper/backtest fill assumption
+    NIFTY: 1.0                 # points per side
+    BANKNIFTY: 3.0
+    default_pct: 0.05          # stocks: % of price per side
+  costs_per_round_trip_pct: 0.06   # brokerage+STT+charges approximation (paper/backtest)
+  hedge_cost_pct_backtest: 0.35    # backtest-only: PE premium debit as % of futures notional
+
+instruments:
+  NIFTY:
+    kind: index
+    setups: [breakout_long, reversal_long]
+    rsi_entry: 60
+    atr_min: 18                # points, 5-min ATR(14)
+    require_volume_expansion: true
+    hedge_otm_pct: 1.25        # weekly PE 1–1.5% OTM
+    reversal_band_points: 40   # L3 ± 40
+    reversal_hedge_otm_pct: 1.0
+    margin_per_lot_fallback: 250000   # used if live margin API unavailable — EDIT to current
+  BANKNIFTY:
+    kind: index
+    setups: [breakout_long]
+    rsi_entry: 60
+    atr_min: 60
+    require_volume_expansion: true
+    hedge_otm_pct: 2.0         # nearest available expiry is picked automatically
+    margin_per_lot_fallback: 280000
+  RELIANCE:
+    kind: stock
+    setups: [stock_momentum]
+    rsi_entry: 60
+    require_vwap: true
+    volume_mult: 1.3           # volume > 1.3x average
+    hedge_otm_pct: 3.5         # 3–4% OTM PE
+    stock_stop_mode: orl       # orl | vwap  (plan doesn't specify stock SL — default ORL)
+    stock_target_r: 1.5        # T1 = entry + 1.5R (plan doesn't specify stock targets)
+    margin_per_lot_fallback: 160000
+  HDFCBANK:
+    kind: stock
+    setups: [stock_momentum]
+    rsi_entry: 60
+    require_vwap: true
+    require_outperform_index: true   # stock %chg > Nifty %chg intraday
+    hedge_otm_pct: 2.5         # 2–3% OTM PE
+    stock_stop_mode: orl
+    stock_target_r: 1.5
+    margin_per_lot_fallback: 150000
+  TATAMOTORS:
+    kind: stock
+    setups: [stock_momentum]
+    rsi_entry: 60
+    require_vwap: false        # plan: ORH + RSI + strong volume only
+    volume_mult: 1.3
+    hedge_otm_pct: 5.0
+    stock_stop_mode: orl
+    stock_target_r: 1.5
+    margin_per_lot_fallback: 140000
+
+dashboard:
+  host: 127.0.0.1
+  port: 8787
+
+kite:
+  tokens_file: .kite_tokens.json
+
+paths:
+  data_dir: data               # ledger, backtest results, history CSVs
